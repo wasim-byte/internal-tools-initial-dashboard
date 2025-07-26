@@ -67,17 +67,14 @@ export function QuickActions() {
     }
 
     try {
-      const response = await fetch("http://localhost:5678/webhook/6e9fdf45-074d-4d3c-8ff7-ec1f0f362e5f", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ client_id: clientId }),
-      });
-
-      if (response.ok) {
+      const success = await webhookService.markAsActive(clientId);
+      if (success) {
         toast({
           title: "Success",
           description: "Project marked as active.",
         });
+      } else {
+        throw new Error("Failed to mark as active");
       }
     } catch (error) {
       toast({
@@ -99,17 +96,14 @@ export function QuickActions() {
     }
 
     try {
-      const response = await fetch("http://localhost:5678/webhook/c7e5fb43-bf46-4f07-8f18-50a3be133d23", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ client_id: clientId }),
-      });
-
-      if (response.ok) {
+      const success = await webhookService.markAsDelivered(clientId);
+      if (success) {
         toast({
           title: "Success",
           description: "Project marked as delivered.",
         });
+      } else {
+        throw new Error("Failed to mark as delivered");
       }
     } catch (error) {
       toast({
@@ -131,22 +125,23 @@ export function QuickActions() {
     }
 
     try {
-      const messageType = type === "Pre-email" ? "precall" : type === "Gmeet Invite" ? "googlemeet" : "brd";
-      const response = await fetch("http://localhost:5678/webhook/157c77be-9e01-4abb-821e-ee1bd376a330", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messageType,
-          clientId,
-          message: `Send ${type} to client ID ${clientId}`
-        }),
-      });
+      let success = false;
+      
+      if (type === "Pre-email") {
+        success = await webhookService.sendCommunication(clientId, "precall");
+      } else if (type === "Gmeet Invite") {
+        success = await webhookService.markGmeetSent(clientId);
+      } else if (type === "BRD Email") {
+        success = await webhookService.markBrdSent(clientId);
+      }
 
-      if (response.ok) {
+      if (success) {
         toast({
           title: "Success",
           description: `${type} sent successfully.`,
         });
+      } else {
+        throw new Error(`Failed to send ${type}`);
       }
     } catch (error) {
       toast({
@@ -168,22 +163,16 @@ export function QuickActions() {
     }
 
     try {
-      const response = await fetch("http://localhost:5678/webhook/8ad47ee4-2aeb-4332-8406-2a30459ee9e2", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          client_id: clientId,
-          amount: parseFloat(earningAmount),
-        }),
-      });
-
-      if (response.ok) {
+      const success = await webhookService.addEarnings(clientId, parseFloat(earningAmount));
+      if (success) {
         toast({
           title: "Success",
           description: "Earning recorded successfully.",
         });
         setIsEarningDialogOpen(false);
         setEarningAmount("");
+      } else {
+        throw new Error("Failed to record earning");
       }
     } catch (error) {
       toast({

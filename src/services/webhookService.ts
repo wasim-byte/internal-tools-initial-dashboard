@@ -251,13 +251,10 @@ class WebhookService {
   }
 
   async markGmeetSent(clientId: string): Promise<boolean> {
-    const result = await this.makeRequest(this.webhookUrls.mainCommunications, {
+    // Send to specific gmeet URL
+    const result = await this.makeRequest("http://localhost:5678/webhook/b909aac0-2fe6-478d-afeb-903e1aef4314", {
       method: 'POST',
-      body: JSON.stringify({ 
-        messageType: 'googlemeet',
-        clientId,
-        message: `Send googlemeet to client ID ${clientId}`
-      }),
+      body: JSON.stringify({ client_id: clientId }),
     });
     return result !== null;
   }
@@ -268,13 +265,10 @@ class WebhookService {
   }
 
   async markBrdSent(clientId: string): Promise<boolean> {
-    const result = await this.makeRequest(this.webhookUrls.mainCommunications, {
+    // Send to specific BRD URL
+    const result = await this.makeRequest("http://localhost:5678/webhook/f88981c2-0d0b-432b-b662-543f3dc66909", {
       method: 'POST',
-      body: JSON.stringify({ 
-        messageType: 'brd',
-        clientId,
-        message: `Send brd to client ID ${clientId}`
-      }),
+      body: JSON.stringify({ client_id: clientId }),
     });
     return result !== null;
   }

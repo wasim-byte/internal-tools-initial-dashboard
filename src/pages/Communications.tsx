@@ -1,133 +1,54 @@
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { MessageSquare, Mail, Video, FileText, Loader2 } from "lucide-react";
+import { MessageSquare, Mail, Video, FileText, Loader2, Send } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import webhookService, { Client, CommunicationEntry } from "@/services/webhookService";
 
-interface Communication {
-  client_id: string;
-  status: string;
-  created_at?: string;
-  client_name?: string;
-  company?: string;
+interface CommunicationWithClient extends CommunicationEntry {
+  client?: Client;
 }
 
 export default function Communications() {
-  const [preEmails, setPreEmails] = useState<Communication[]>([]);
-  const [gmeetInvites, setGmeetInvites] = useState<Communication[]>([]);
-  const [brdEmails, setBrdEmails] = useState<Communication[]>([]);
+  const [preEmailComms, setPreEmailComms] = useState<CommunicationWithClient[]>([]);
+  const [gmeetComms, setGmeetComms] = useState<CommunicationWithClient[]>([]);
+  const [brdComms, setBrdComms] = useState<CommunicationWithClient[]>([]);
   const [loading, setLoading] = useState(true);
+  const [clientId, setClientId] = useState("");
+  const [clientInfo, setClientInfo] = useState<Client | null>(null);
+  const [loadingClientInfo, setLoadingClientInfo] = useState(false);
   const { toast } = useToast();
 
   const fetchCommunications = async () => {
     try {
       setLoading(true);
       
-      // Check if we're in development or if webhooks are accessible
-      const isLocalhost = window.location.hostname === 'localhost';
-      const baseUrl = isLocalhost ? "http://localhost:5678" : "";
-      
-      if (!baseUrl && !isLocalhost) {
-        // For production, we need proper webhook URLs or API endpoints
-        console.warn("Webhook endpoints not configured for production environment");
-        setPreEmails([]);
-        setGmeetInvites([]);
-        setBrdEmails([]);
-        toast({
-          title: "Configuration Required",
-          description: "Communication webhooks need to be configured for this environment.",
-          variant: "destructive",
-        });
-        return;
-      }
+      const [clients, preEmails, gmeets, brds] = await Promise.all([
+        webhookService.getAllClients(),
+        webhookService.getPreEmailStatus(),
+        webhookService.getGmeetStatus(),
+        webhookService.getBrdStatus(),
+      ]);
 
-      // Fetch Pre-emails with better error handling
-      try {
-        const preEmailResponse = await fetch(`${baseUrl}/webhook/9fb9503c-19f2-4987-8b33-fcabcb513b85`, {
-          method: 'GET',
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-          },
-        });
-        
-        if (preEmailResponse.ok) {
-          const text = await preEmailResponse.text();
-          if (text.trim()) {
-            const preEmailData = JSON.parse(text);
-            setPreEmails(Array.isArray(preEmailData) ? preEmailData : []);
-          } else {
-            setPreEmails([]);
-          }
-        } else {
-          console.warn("Pre-email webhook failed:", preEmailResponse.status);
-          setPreEmails([]);
-        }
-      } catch (error) {
-        console.error("Pre-email fetch error:", error);
-        setPreEmails([]);
-      }
+      // Enrich communications with client data
+      const enrichWithClientData = (comms: CommunicationEntry[]) => 
+        comms.map(comm => ({
+          ...comm,
+          client: clients.find(c => c._id === comm.client_id)
+        }));
 
-      // Fetch Gmeet invites with better error handling
-      try {
-        const gmeetResponse = await fetch(`${baseUrl}/webhook/9736912e-d79f-4789-8872-64662a173198`, {
-          method: 'GET',
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-          },
-        });
-        
-        if (gmeetResponse.ok) {
-          const text = await gmeetResponse.text();
-          if (text.trim()) {
-            const gmeetData = JSON.parse(text);
-            setGmeetInvites(Array.isArray(gmeetData) ? gmeetData : []);
-          } else {
-            setGmeetInvites([]);
-          }
-        } else {
-          console.warn("Gmeet webhook failed:", gmeetResponse.status);
-          setGmeetInvites([]);
-        }
-      } catch (error) {
-        console.error("Gmeet fetch error:", error);
-        setGmeetInvites([]);
-      }
-
-      // Fetch BRD emails with better error handling
-      try {
-        const brdResponse = await fetch(`${baseUrl}/webhook/92bfff09-2507-4334-963e-ccf80ed74c21`, {
-          method: 'GET',
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-          },
-        });
-        
-        if (brdResponse.ok) {
-          const text = await brdResponse.text();
-          if (text.trim()) {
-            const brdData = JSON.parse(text);
-            setBrdEmails(Array.isArray(brdData) ? brdData : []);
-          } else {
-            setBrdEmails([]);
-          }
-        } else {
-          console.warn("BRD webhook failed:", brdResponse.status);
-          setBrdEmails([]);
-        }
-      } catch (error) {
-        console.error("BRD fetch error:", error);
-        setBrdEmails([]);
-      }
-
+      setPreEmailComms(enrichWithClientData(preEmails));
+      setGmeetComms(enrichWithClientData(gmeets));
+      setBrdComms(enrichWithClientData(brds));
     } catch (error) {
       console.error("Error fetching communications:", error);
       toast({
-        title: "Error", 
-        description: "Failed to fetch communications data. Please check your network connection and webhook configuration.",
+        title: "Error",
+        description: "Failed to fetch communications.",
         variant: "destructive",
       });
     } finally {
@@ -135,63 +56,132 @@ export default function Communications() {
     }
   };
 
+  // Fetch client info when client ID changes
+  useEffect(() => {
+    const fetchClientInfo = async () => {
+      if (!clientId.trim()) {
+        setClientInfo(null);
+        return;
+      }
+
+      setLoadingClientInfo(true);
+      try {
+        const clients = await webhookService.getAllClients();
+        const client = clients.find(c => c._id === clientId.trim());
+        setClientInfo(client || null);
+      } catch (error) {
+        console.error("Error fetching client info:", error);
+      } finally {
+        setLoadingClientInfo(false);
+      }
+    };
+
+    const debounceTimeout = setTimeout(fetchClientInfo, 500);
+    return () => clearTimeout(debounceTimeout);
+  }, [clientId]);
+
+  const sendCommunication = async (type: 'precall' | 'gmeet' | 'brd') => {
+    if (!clientId.trim()) {
+      toast({
+        title: "Error",
+        description: "Please enter a client ID.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      let success = false;
+      let typeName = "";
+      
+      if (type === "precall") {
+        success = await webhookService.sendCommunication(clientId, "precall");
+        typeName = "Pre-email";
+      } else if (type === "gmeet") {
+        success = await webhookService.markGmeetSent(clientId);
+        typeName = "Google Meet invite";
+      } else if (type === "brd") {
+        success = await webhookService.markBrdSent(clientId);
+        typeName = "BRD email";
+      }
+
+      if (success) {
+        toast({
+          title: "Success",
+          description: `${typeName} sent successfully.`,
+        });
+        fetchCommunications(); // Refresh the data
+        setClientId(""); // Clear the input
+        setClientInfo(null);
+      } else {
+        throw new Error(`Failed to send ${typeName}`);
+      }
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: `Failed to send communication.`,
+        variant: "destructive",
+      });
+    }
+  };
+
   useEffect(() => {
     fetchCommunications();
   }, []);
 
-  const CommunicationCard = ({ communication, type }: { communication: Communication; type: string }) => {
-    const getIcon = () => {
-      switch (type) {
-        case "pre-email":
-          return <Mail className="h-4 w-4" />;
-        case "gmeet":
-          return <Video className="h-4 w-4" />;
-        case "brd":
-          return <FileText className="h-4 w-4" />;
-        default:
-          return <MessageSquare className="h-4 w-4" />;
-      }
-    };
-
-    const getTypeColor = () => {
-      switch (type) {
-        case "pre-email":
-          return "bg-accent/20 text-accent border-accent/30";
-        case "gmeet":
-          return "bg-warning/20 text-warning border-warning/30";
-        case "brd":
-          return "bg-success/20 text-success border-success/30";
-        default:
-          return "bg-muted/20 text-muted-foreground border-muted/30";
-      }
-    };
-
-    return (
-      <div className="flex items-center justify-between p-4 rounded-lg bg-gradient-card border border-border/50 hover:border-accent/30 transition-all duration-200">
-        <div className="flex items-center space-x-4">
-          <div className={`p-2 rounded-lg ${getTypeColor()}`}>
-            {getIcon()}
+  const CommunicationCard = ({ comm }: { comm: CommunicationWithClient }) => (
+    <Card className="glass hover-lift transition-all duration-200">
+      <CardContent className="p-4">
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <h3 className="font-semibold">{comm.client?.name || "Unknown Client"}</h3>
+              <p className="text-sm text-muted-foreground">{comm.client?.email}</p>
+              <p className="text-sm text-muted-foreground">{comm.client?.company}</p>
+            </div>
+            <Badge variant="outline" className="bg-accent/20 text-accent border-accent/30">
+              ID: {comm.client_id}
+            </Badge>
           </div>
-          <div>
-            <p className="font-medium">
-              {communication.client_name || `Client ID: ${communication.client_id}`}
-            </p>
-            {communication.company && (
-              <p className="text-sm text-muted-foreground">{communication.company}</p>
-            )}
-            <p className="text-sm text-muted-foreground">{communication.status}</p>
-          </div>
-        </div>
-        <div className="text-right">
-          {communication.created_at && (
-            <p className="text-xs text-muted-foreground">
-              {new Date(communication.created_at).toLocaleDateString()}
-            </p>
+          
+          {comm.client?.phone && (
+            <p className="text-xs text-muted-foreground">📞 {comm.client.phone}</p>
           )}
+          
+          {comm.client?.website && (
+            <a 
+              href={comm.client.website} 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="text-xs text-accent hover:underline block"
+            >
+              🌐 Visit Website
+            </a>
+          )}
+          
+          {comm.client && Array.isArray(comm.client.servicesNeeded) && comm.client.servicesNeeded.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {comm.client.servicesNeeded.slice(0, 3).map((service) => (
+                <Badge key={service} variant="outline" className="text-xs">
+                  {service}
+                </Badge>
+              ))}
+              {comm.client.servicesNeeded.length > 3 && (
+                <Badge variant="outline" className="text-xs">
+                  +{comm.client.servicesNeeded.length - 3} more
+                </Badge>
+              )}
+            </div>
+          )}
+          
+          <div className="text-xs text-muted-foreground">
+            {comm.sentAt ? `Sent: ${new Date(comm.sentAt).toLocaleString()}` : 
+            comm.client?.submittedAt ? `Client submitted: ${new Date(comm.client.submittedAt).toLocaleDateString()}` : ""}
+          </div>
         </div>
-      </div>
-    );
-  };
+      </CardContent>
+    </Card>
+  );
 
   if (loading) {
     return (
@@ -201,7 +191,7 @@ export default function Communications() {
     );
   }
 
-  const totalCommunications = preEmails.length + gmeetInvites.length + brdEmails.length;
+  const totalCommunications = preEmailComms.length + gmeetComms.length + brdComms.length;
 
   return (
     <div className="space-y-8 animate-slide-up">
@@ -211,9 +201,82 @@ export default function Communications() {
           Communications
         </h1>
         <p className="text-muted-foreground text-lg">
-          Track and manage all client communications
+          Manage client communications and track sent messages
         </p>
       </div>
+
+      {/* Quick Send Section */}
+      <Card className="glass">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Send className="h-5 w-5 text-accent" />
+            Send Communication
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="comm-client-id">Client ID</Label>
+            <Input
+              id="comm-client-id"
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+              placeholder="Enter client ID..."
+              className="glass"
+            />
+            
+            {loadingClientInfo && (
+              <div className="text-sm text-muted-foreground">Loading client info...</div>
+            )}
+            
+            {clientInfo && (
+              <div className="p-3 bg-muted/20 rounded-lg space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium">{clientInfo.name}</span>
+                  <Badge className="bg-accent/20 text-accent border-accent/30">
+                    {clientInfo.manuallyAdded ? "Manual" : "Auto"}
+                  </Badge>
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  <div>{clientInfo.email}</div>
+                  <div>{clientInfo.company}</div>
+                  {clientInfo.phone && <div>📞 {clientInfo.phone}</div>}
+                </div>
+              </div>
+            )}
+            
+            {clientId.trim() && !loadingClientInfo && !clientInfo && (
+              <div className="text-sm text-red-400">Client not found</div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            <Button
+              onClick={() => sendCommunication("precall")}
+              className="flex items-center gap-2 bg-gradient-button"
+              disabled={!clientInfo}
+            >
+              <Mail className="h-4 w-4" />
+              Send Pre-email
+            </Button>
+            <Button
+              onClick={() => sendCommunication("gmeet")}
+              className="flex items-center gap-2 bg-gradient-button"
+              disabled={!clientInfo}
+            >
+              <Video className="h-4 w-4" />
+              Send Google Meet
+            </Button>
+            <Button
+              onClick={() => sendCommunication("brd")}
+              className="flex items-center gap-2 bg-gradient-button"
+              disabled={!clientInfo}
+            >
+              <FileText className="h-4 w-4" />
+              Send BRD
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
@@ -234,7 +297,7 @@ export default function Communications() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Pre-emails</p>
-                <p className="text-3xl font-bold gradient-text">{preEmails.length}</p>
+                <p className="text-3xl font-bold gradient-text">{preEmailComms.length}</p>
               </div>
               <Mail className="h-6 w-6 text-accent" />
             </div>
@@ -246,7 +309,7 @@ export default function Communications() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Gmeet Invites</p>
-                <p className="text-3xl font-bold gradient-text">{gmeetInvites.length}</p>
+                <p className="text-3xl font-bold gradient-text">{gmeetComms.length}</p>
               </div>
               <Video className="h-6 w-6 text-warning" />
             </div>
@@ -258,7 +321,7 @@ export default function Communications() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">BRD Emails</p>
-                <p className="text-3xl font-bold gradient-text">{brdEmails.length}</p>
+                <p className="text-3xl font-bold gradient-text">{brdComms.length}</p>
               </div>
               <FileText className="h-6 w-6 text-success" />
             </div>
@@ -271,15 +334,15 @@ export default function Communications() {
         <TabsList className="glass grid w-full grid-cols-3">
           <TabsTrigger value="pre-emails" className="flex items-center gap-2">
             <Mail className="h-4 w-4" />
-            Pre-emails ({preEmails.length})
+            Pre-emails ({preEmailComms.length})
           </TabsTrigger>
           <TabsTrigger value="gmeet" className="flex items-center gap-2">
             <Video className="h-4 w-4" />
-            Gmeet Invites ({gmeetInvites.length})
+            Gmeet Invites ({gmeetComms.length})
           </TabsTrigger>
           <TabsTrigger value="brd" className="flex items-center gap-2">
             <FileText className="h-4 w-4" />
-            BRD Emails ({brdEmails.length})
+            BRD Emails ({brdComms.length})
           </TabsTrigger>
         </TabsList>
 
@@ -292,15 +355,15 @@ export default function Communications() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {preEmails.length === 0 ? (
+              {preEmailComms.length === 0 ? (
                 <div className="text-center py-12">
                   <Mail className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
                   <p className="text-muted-foreground">No pre-emails sent yet.</p>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {preEmails.map((comm, index) => (
-                    <CommunicationCard key={index} communication={comm} type="pre-email" />
+                <div className="grid gap-4">
+                  {preEmailComms.map((comm) => (
+                    <CommunicationCard key={`pre-${comm._id}`} comm={comm} />
                   ))}
                 </div>
               )}
@@ -317,15 +380,15 @@ export default function Communications() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {gmeetInvites.length === 0 ? (
+              {gmeetComms.length === 0 ? (
                 <div className="text-center py-12">
                   <Video className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                  <p className="text-muted-foreground">No Gmeet invites sent yet.</p>
+                  <p className="text-muted-foreground">No Google Meet invites sent yet.</p>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {gmeetInvites.map((comm, index) => (
-                    <CommunicationCard key={index} communication={comm} type="gmeet" />
+                <div className="grid gap-4">
+                  {gmeetComms.map((comm) => (
+                    <CommunicationCard key={`gmeet-${comm._id}`} comm={comm} />
                   ))}
                 </div>
               )}
@@ -342,15 +405,15 @@ export default function Communications() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {brdEmails.length === 0 ? (
+              {brdComms.length === 0 ? (
                 <div className="text-center py-12">
                   <FileText className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
                   <p className="text-muted-foreground">No BRD emails sent yet.</p>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {brdEmails.map((comm, index) => (
-                    <CommunicationCard key={index} communication={comm} type="brd" />
+                <div className="grid gap-4">
+                  {brdComms.map((comm) => (
+                    <CommunicationCard key={`brd-${comm._id}`} comm={comm} />
                   ))}
                 </div>
               )}
