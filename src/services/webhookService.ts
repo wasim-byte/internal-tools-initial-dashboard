@@ -53,6 +53,7 @@ export interface Client {
   companySummary?: string;
   submittedAt: string;
   manuallyAdded?: boolean;
+  isManuallyAdded?: string;
   addedBy?: string;
   addedAt?: string;
 }
@@ -123,7 +124,18 @@ class WebhookService {
         return [] as T; // Return empty array for empty responses
       }
       
-      return JSON.parse(text);
+      // Handle plain text responses like "success"
+      if (text.trim() === 'success' || text.trim() === 'ok') {
+        return { success: true } as T;
+      }
+      
+      // Try to parse as JSON
+      try {
+        return JSON.parse(text);
+      } catch (parseError) {
+        // If not valid JSON, return the text as is
+        return text as T;
+      }
     } catch (error) {
       console.error(`Webhook request failed for ${url}:`, error);
       return null;
@@ -220,23 +232,38 @@ class WebhookService {
     });
   }
 
-  // Communication operations
+  // Communication operations - Master URL workflow
   async sendCommunication(clientId: string, messageType: 'precall' | 'googlemeet' | 'brd', message?: string): Promise<boolean> {
-    const result = await this.makeRequest(this.webhookUrls.mainCommunications, {
+    // Always send to master URL first with client_id and request_type
+    const masterResult = await this.makeRequest(this.webhookUrls.mainCommunications, {
       method: 'POST',
       body: JSON.stringify({
+        client_id: clientId,
+        request_type: messageType,
         messageType,
         clientId,
         message: message || `Send ${messageType} to client ID ${clientId}`,
       }),
     });
-    return result !== null;
+    
+    // Then trigger the specific endpoint based on message type
+    let specificResult = true;
+    if (messageType === 'googlemeet') {
+      specificResult = await this.markGmeetSent(clientId);
+    } else if (messageType === 'brd') {
+      specificResult = await this.markBrdSent(clientId);
+    } else if (messageType === 'precall') {
+      specificResult = await this.markPreEmailSent(clientId);
+    }
+    
+    return masterResult !== null && specificResult;
   }
 
   async markPreEmailSent(clientId: string): Promise<boolean> {
     const result = await this.makeRequest(this.webhookUrls.mainCommunications, {
       method: 'POST',
       body: JSON.stringify({ 
+        client_id: clientId,
         messageType: 'precall',
         clientId,
         message: `Send precall to client ID ${clientId}`
@@ -358,17 +385,25 @@ class WebhookService {
       this.getEarnings(),
     ]);
 
-    const activeIds = new Set(active.map(a => a.client_id));
-    const deliveredIds = new Set(delivered.map(d => d.client_id));
+    const activeIds = new Set(active.map(a => a.client_id?.trim()));
+    const deliveredIds = new Set(delivered.map(d => d.client_id?.trim()));
+    
+    // Remove client from active if marked as delivered
+    const actualActiveIds = new Set([...activeIds].filter(id => !deliveredIds.has(id)));
+    
     const pendingClients = clients.filter(client => 
-      !activeIds.has(client._id) && !deliveredIds.has(client._id)
+      !actualActiveIds.has(client._id?.trim()) && !deliveredIds.has(client._id?.trim())
     );
-    const manualClients = clients.filter(client => client.manuallyAdded === true);
-    const totalEarnings = earnings.reduce((sum, e) => sum + e.amount, 0);
+    
+    const manualClients = clients.filter(client => 
+      client.manuallyAdded === true || client.isManuallyAdded === "Yes" || client.addedBy === "Manually Added"
+    );
+    
+    const totalEarnings = earnings.reduce((sum, e) => sum + (e.amount || 0), 0);
 
     return {
       pending: pendingClients.length,
-      active: active.length,
+      active: actualActiveIds.size,
       delivered: delivered.length,
       manual: manualClients.length,
       totalEarnings,
